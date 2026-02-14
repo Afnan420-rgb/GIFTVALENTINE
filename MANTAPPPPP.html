@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gesture: Celyn Abigail</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; }
+        
+        /* Debug UI */
+        #debug-container {
+            position: absolute; top: 10px; left: 10px; z-index: 100;
+            border: 2px solid #00ffff; background: rgba(0,0,0,0.8);
+            width: 240px; height: 180px; border-radius: 8px;
+        }
+        #input_video, #output_canvas { 
+            position: absolute; width: 100%; height: 100%; 
+            transform: scaleX(-1); object-fit: cover;
+        }
+        #status-panel {
+            position: absolute; top: 200px; left: 10px; color: #fff;
+            font-size: 13px; font-weight: 600; background: rgba(0,0,0,0.7);
+            padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2);
+            line-height: 1.8; pointer-events: none; width: 220px;
+        }
+        .status-item { display: flex; align-items: center; gap: 8px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+        .active .dot { box-shadow: 0 0 5px currentColor; }
+        
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #00ffff; font-size: 24px; z-index: 999; pointer-events: none;
+            text-shadow: 0 0 10px #00ffff;
+        }
+    </style>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="loading">Memuat Sistem AI...</div>
+
+    <div id="debug-container">
+        <video id="input_video"></video>
+        <canvas id="output_canvas" width="240" height="180"></canvas>
+    </div>
+
+    <div id="status-panel">
+        <div style="margin-bottom:5px; border-bottom:1px solid #444; padding-bottom:5px;">STATUS GESTUR:</div>
+        <div class="status-item" id="st-saturn" style="color:#ffcc00"><div class="dot" style="background:#ffcc00"></div> ✊ Saturnus</div>
+        <div class="status-item" id="st-love" style="color:#ff0033"><div class="dot" style="background:#ff0033"></div> ✌️ Love (Peace)</div>
+        <div class="status-item" id="st-ilu" style="color:#ff33cc"><div class="dot" style="background:#ff33cc"></div> ☝️ I Love You</div>
+        <div class="status-item" id="st-name" style="color:#b088ff"><div class="dot" style="background:#b088ff"></div> 🤟 CELYN ABIGAIL</div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+
+        let scene, camera, renderer, composer, material;
+        let particleSystem;
+        
+        // --- STATE VARIABLES ---
+        // 0: Saturn, 1: Love, 2: ILU, 3: Celyn
+        const STATE = { 
+            mixSaturn: 0, mixHeart: 0, mixILU: 0, mixName: 0,
+            posX: 0, posY: 0, rotX: 0, rotY: 0
+        }; 
+        
+        let targetSaturn = 0, targetHeart = 0, targetILU = 0, targetName = 0;
+        let targetPosX = 0, targetPosY = 0, targetRotX = 0, targetRotY = 0;
+
+        // --- 1. MATEMATIKA BENTUK ---
+
+        // A. Hati
+        function getHeartPoint(t) {
+            const x = 16 * Math.pow(Math.sin(t), 3);
+            const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+            return { x: x, y: y };
+        }
+
+        // B. Saturnus
+        function getSaturnPoint(i, total) {
+            const pos = new THREE.Vector3();
+            if (i < total * 0.4) { 
+                const r = 9 + Math.random(); 
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos((Math.random() * 2) - 1);
+                pos.set(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+            } else { 
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 12 + Math.random() * 12; 
+                pos.set(dist * Math.cos(angle), (Math.random()-0.5)*0.5, dist * Math.sin(angle));
+            }
+            pos.applyAxisAngle(new THREE.Vector3(1, 0, 0), 0.4); 
+            pos.applyAxisAngle(new THREE.Vector3(0, 0, 1), 0.3); 
+            return pos;
+        }
+
+        // C. Teks "I LOVE YOU" (Simpel)
+        function getILUPoint(i, total) {
+            const pos = new THREE.Vector3();
+            if (i < total * 0.2) { 
+                pos.set(-18 + Math.random()*2, (Math.random()-0.5)*20, (Math.random()-0.5)*2);
+            } else if (i < total * 0.6) { 
+                const t = Math.random() * Math.PI * 2; const h = getHeartPoint(t);
+                pos.set(h.x * 0.5, h.y * 0.5, (Math.random()-0.5)*4);
+            } else { 
+                const t = Math.PI + (Math.random() * Math.PI);
+                let yCalc = Math.sin(t) * 9; if(yCalc > 0) yCalc += Math.random()*8;
+                pos.set(18 + Math.cos(t)*7 + Math.random(), yCalc + 5, (Math.random()-0.5)*2);
+            }
+            return pos;
+        }
+
+        // D. TEKS "CELYN ABIGAIL" (Advanced Lettering)
+        function getStrokePoint(char, offsetX, offsetY) {
+            const pos = new THREE.Vector3(0, 0, 0);
+            const r = Math.random(); // 0-1 untuk posisi di garis
+            
+            // Helper untuk garis lurus
+            const line = (x1, y1, x2, y2) => {
+                pos.x = x1 + (x2 - x1) * r;
+                pos.y = y1 + (y2 - y1) * r;
+            };
+            // Helper untuk kurva (circle)
+            const curve = (cx, cy, radius, startAngle, endAngle) => {
+                const a = startAngle + (endAngle - startAngle) * r;
+                pos.x = cx + radius * Math.cos(a);
+                pos.y = cy + radius * Math.sin(a);
+            };
+
+            const w = 3; // Lebar huruf
+            const h = 5; // Tinggi huruf
+            const choice = Math.random(); // Pilih stroke acak
+
+            switch(char) {
+                case 'C': curve(w/2, 0, w/2, 0.5, 5.8); break;
+                case 'E': 
+                    if(choice<0.4) line(0, h/2, 0, -h/2); // vert
+                    else if(choice<0.6) line(0, h/2, w, h/2); // top
+                    else if(choice<0.8) line(0, 0, w-1, 0); // mid
+                    else line(0, -h/2, w, -h/2); // bot
+                    break;
+                case 'L': 
+                    if(choice<0.6) line(0, h/2, 0, -h/2);
+                    else line(0, -h/2, w, -h/2);
+                    break;
+                case 'Y': 
+                    if(choice<0.3) line(-w/2, h/2, 0, 0);
+                    else if(choice<0.6) line(w/2, h/2, 0, 0);
+                    else line(0, 0, 0, -h/2);
+                    break;
+                case 'N': 
+                    if(choice<0.35) line(-w/2, -h/2, -w/2, h/2);
+                    else if(choice<0.7) line(-w/2, h/2, w/2, -h/2);
+                    else line(w/2, -h/2, w/2, h/2);
+                    break;
+                case 'A':
+                    if(choice<0.4) line(-w/2, -h/2, 0, h/2);
+                    else if(choice<0.8) line(0, h/2, w/2, -h/2);
+                    else line(-w/4, 0, w/4, 0);
+                    break;
+                case 'B':
+                    if(choice<0.3) line(0, -h/2, 0, h/2);
+                    else if(choice<0.65) curve(0, h/4, h/4, -1.5, 1.5);
+                    else curve(0, -h/4, h/4, -1.5, 1.5);
+                    break;
+                case 'I': line(0, -h/2, 0, h/2); break;
+                case 'G':
+                    if(choice<0.7) curve(w/2, 0, w/2, 0.5, 5.8); // C part
+                    else line(w/2, 0, w, 0); // bar
+                    break;
+                default: break;
+            }
+            
+            pos.x += offsetX;
+            pos.y += offsetY;
+            pos.z = (Math.random() - 0.5) * 1.5; // Sedikit tebal
+            return pos;
+        }
+
+        function getCelynPoint(i, total) {
+            // Bagi partikel untuk CELYN (5 huruf) dan ABIGAIL (7 huruf)
+            // Baris 1: CELYN (y=4), Baris 2: ABIGAIL (y=-4)
+            
+            const part = i / total;
+            let char = '';
+            let ox = 0, oy = 0;
+            const spacing = 4.5;
+
+            // Mapping kasar berdasarkan index partikel
+            if (part < 0.45) { // Baris Atas: CELYN (5 huruf)
+                oy = 4;
+                const sub = part / 0.45;
+                if (sub < 0.2) { char='C'; ox = -2 * spacing; }
+                else if (sub < 0.4) { char='E'; ox = -1 * spacing; }
+                else if (sub < 0.6) { char='L'; ox = 0; }
+                else if (sub < 0.8) { char='Y'; ox = 1 * spacing; }
+                else { char='N'; ox = 2 * spacing; }
+            } else { // Baris Bawah: ABIGAIL (7 huruf)
+                oy = -4;
+                const sub = (part - 0.45) / 0.55;
+                if (sub < 0.14) { char='A'; ox = -3 * spacing; }
+                else if (sub < 0.28) { char='B'; ox = -2 * spacing; }
+                else if (sub < 0.42) { char='I'; ox = -1 * spacing; }
+                else if (sub < 0.56) { char='G'; ox = 0; }
+                else if (sub < 0.70) { char='A'; ox = 1 * spacing; }
+                else if (sub < 0.84) { char='I'; ox = 2 * spacing; }
+                else { char='L'; ox = 3 * spacing; }
+            }
+            
+            return getStrokePoint(char, ox, oy);
+        }
+
+
+        // --- 2. SETUP THREE.JS ---
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 60;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+            bloomPass.threshold = 0; bloomPass.strength = 1.8; bloomPass.radius = 0.5;
+
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            createParticles();
+            animate();
+        }
+
+        function createParticles() {
+            const count = 35000; 
+            const geometry = new THREE.BufferGeometry();
+            const posBase = [], posSaturn = [], posHeart = [], posILU = [], posName = [];
+
+            for (let i = 0; i < count; i++) {
+                // Base
+                const r = 40 * Math.cbrt(Math.random());
+                const theta = Math.random() * Math.PI * 2, phi = Math.acos(2 * Math.random() - 1);
+                posBase.push(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+                
+                // Saturn
+                const s = getSaturnPoint(i, count); posSaturn.push(s.x, s.y, s.z);
+                // Heart
+                const t = Math.random() * Math.PI * 2; const h = getHeartPoint(t);
+                posHeart.push(h.x, h.y, (Math.random()-0.5)*8);
+                // ILU
+                const ilu = getILUPoint(i, count); posILU.push(ilu.x, ilu.y, ilu.z);
+                // Celyn Abigail
+                const n = getCelynPoint(i, count); posName.push(n.x, n.y, n.z);
+            }
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(posBase, 3));
+            geometry.setAttribute('targetSaturn', new THREE.Float32BufferAttribute(posSaturn, 3));
+            geometry.setAttribute('targetHeart', new THREE.Float32BufferAttribute(posHeart, 3));
+            geometry.setAttribute('targetILU', new THREE.Float32BufferAttribute(posILU, 3));
+            geometry.setAttribute('targetName', new THREE.Float32BufferAttribute(posName, 3));
+
+            material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uMixSaturn: { value: 0 }, uMixHeart: { value: 0 }, uMixILU: { value: 0 }, uMixName: { value: 0 },
+                    colBase: { value: new THREE.Color(0x00ffff) },
+                    colSaturn: { value: new THREE.Color(0xffcc00) },
+                    colHeart: { value: new THREE.Color(0xff0033) },
+                    colILU: { value: new THREE.Color(0xff33cc) },
+                    colName: { value: new THREE.Color(0xb088ff) } // Lavender
+                },
+                vertexShader: `
+                    uniform float uTime;
+                    uniform float uMixSaturn, uMixHeart, uMixILU, uMixName;
+                    attribute vec3 targetSaturn, targetHeart, targetILU, targetName;
+                    varying vec3 vColor;
+                    uniform vec3 colBase, colSaturn, colHeart, colILU, colName;
+                    float ease(float t) { return t * t * (3.0 - 2.0 * t); }
+                    void main() {
+                        vec3 pos = position;
+                        float mS = ease(uMixSaturn); float mH = ease(uMixHeart); 
+                        float mI = ease(uMixILU); float mN = ease(uMixName);
+                        
+                        // Morphing
+                        pos = mix(pos, targetSaturn, mS);
+                        pos = mix(pos, targetHeart, mH);
+                        pos = mix(pos, targetILU, mI);
+                        pos = mix(pos, targetName, mN);
+                        
+                        // Noise movement
+                        float noiseStr = 1.0 - max(mN, mI); // Kurangi noise saat teks agar terbaca
+                        pos.x += sin(uTime + pos.z * 0.5) * 0.2 * noiseStr; 
+
+                        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        gl_Position = projectionMatrix * mvPosition;
+                        gl_PointSize = (130.0 / -mvPosition.z);
+                        
+                        // Color Mixing
+                        vec3 finalColor = colBase;
+                        finalColor = mix(finalColor, colSaturn, mS);
+                        finalColor = mix(finalColor, colHeart, mH);
+                        finalColor = mix(finalColor, colILU, mI);
+                        finalColor = mix(finalColor, colName, mN);
+                        vColor = finalColor;
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vColor;
+                    void main() {
+                        float d = distance(gl_PointCoord, vec2(0.5));
+                        if (d > 0.5) discard;
+                        float alpha = 1.0 - smoothstep(0.1, 0.5, d);
+                        gl_FragColor = vec4(vColor, alpha);
+                    }
+                `,
+                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+            });
+
+            particleSystem = new THREE.Points(geometry, material);
+            scene.add(particleSystem);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (material) {
+                material.uniforms.uTime.value = performance.now() * 0.001;
+                
+                // LERP Transitions
+                STATE.mixSaturn += (targetSaturn - STATE.mixSaturn) * 0.08;
+                STATE.mixHeart += (targetHeart - STATE.mixHeart) * 0.08;
+                STATE.mixILU += (targetILU - STATE.mixILU) * 0.08;
+                STATE.mixName += (targetName - STATE.mixName) * 0.08;
+
+                material.uniforms.uMixSaturn.value = STATE.mixSaturn;
+                material.uniforms.uMixHeart.value = STATE.mixHeart;
+                material.uniforms.uMixILU.value = STATE.mixILU;
+                material.uniforms.uMixName.value = STATE.mixName;
+
+                // Hand Follow
+                STATE.posX += (targetPosX - STATE.posX) * 0.1;
+                STATE.posY += (targetPosY - STATE.posY) * 0.1;
+                STATE.rotX += (targetRotX - STATE.rotX) * 0.1;
+                STATE.rotY += (targetRotY - STATE.rotY) * 0.1;
+
+                particleSystem.position.set(STATE.posX, STATE.posY, 0);
+                particleSystem.rotation.x = STATE.rotY;
+                particleSystem.rotation.y = STATE.rotX;
+            }
+            composer.render();
+        }
+
+        // --- 3. LOGIKA GESTUR (MEDIA PIPE) ---
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        function updateUI(activeId) {
+            document.querySelectorAll('.status-item').forEach(el => el.classList.remove('active'));
+            if(activeId) document.getElementById(activeId).classList.add('active');
+        }
+
+        function onResults(results) {
+            document.getElementById('loading').style.display = 'none';
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const lm = results.multiHandLandmarks[0];
+                drawConnectors(canvasCtx, lm, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+                drawLandmarks(canvasCtx, lm, {color: '#FF0000', lineWidth: 1});
+
+                // A. Tracking
+                const center = lm[9];
+                targetPosX = (0.5 - center.x) * 60; 
+                targetPosY = (0.5 - center.y) * 40;
+                targetRotX = (0.5 - center.x) * 1.5; 
+                targetRotY = (center.y - 0.5) * 1.0; 
+
+                // B. Gestur Logic
+                const palm = lm[0];
+                const tips = [8, 12, 16, 20]; // Telunjuk, Tengah, Manis, Kelingking
+                const dists = tips.map(t => Math.hypot(lm[t].x - palm.x, lm[t].y - palm.y));
+                
+                const isOpen = d => d > 0.3;
+                const isFolded = d => d < 0.22;
+                
+                // 1. KEPAL (Saturnus)
+                if (dists.every(d => isFolded(d))) {
+                    targetSaturn = 1; targetHeart = 0; targetILU = 0; targetName = 0;
+                    updateUI('st-saturn');
+                }
+                // 2. PEACE (Love) - Telunjuk & Tengah Buka
+                else if (isOpen(dists[0]) && isOpen(dists[1]) && isFolded(dists[2]) && isFolded(dists[3])) {
+                    targetSaturn = 0; targetHeart = 1; targetILU = 0; targetName = 0;
+                    updateUI('st-love');
+                }
+                // 3. TIGA JARI (Celyn Abigail) - Telunjuk, Tengah, Manis Buka, Kelingking Tutup
+                else if (isOpen(dists[0]) && isOpen(dists[1]) && isOpen(dists[2]) && isFolded(dists[3])) {
+                    targetSaturn = 0; targetHeart = 0; targetILU = 0; targetName = 1;
+                    updateUI('st-name');
+                }
+                // 4. SATU JARI (I Love You) - Telunjuk Buka
+                else if (isOpen(dists[0]) && isFolded(dists[1]) && isFolded(dists[2])) {
+                    targetSaturn = 0; targetHeart = 0; targetILU = 1; targetName = 0;
+                    updateUI('st-ilu');
+                }
+                // 5. NETRAL
+                else {
+                    targetSaturn = 0; targetHeart = 0; targetILU = 0; targetName = 0;
+                    updateUI(null);
+                }
+
+            } else {
+                targetSaturn=0; targetHeart=0; targetILU=0; targetName=0;
+                targetPosX=0; targetPosY=0; targetRotX=0; targetRotY=0;
+                updateUI(null);
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+        hands.onResults(onResults);
+
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 240, height: 180
+        });
+        cameraUtils.start();
+
+        initThree();
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
